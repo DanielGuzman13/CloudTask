@@ -55,7 +55,7 @@ cloudtasks/
 ## Configuración de Supabase
 
 1. Crea un proyecto en [supabase.com](https://supabase.com) (plan gratuito).
-2. En el **SQL Editor**, crea la tabla `tasks`:
+2. En el **SQL Editor**, crea la tabla `tasks`: (deben cambiar los atributos segun hayan creado sus tablas)
 
    ```sql
    create table tasks (
@@ -71,7 +71,7 @@ cloudtasks/
 
 3. Habilita Row Level Security y crea políticas que permitan al rol `anon` hacer `select`, `insert`, `update` y `delete` (necesario porque esta etapa no implementa autenticación de usuarios).
 4. En **Project Settings → API**, copia el **Project URL** y la clave **anon public**.
-5. Pégalos en `js/supabaseClient.js`, en `SUPABASE_URL` y `SUPABASE_ANON_KEY`.
+5. Pégalos en `js/supabaseClient.js`, en `SUPABASE_URL` y `SUPABASE_ANON_KEY` respectivamente.
 
 La anon key es pública por diseño (protegida por las políticas RLS), por lo que es seguro incluirla en el repositorio. La `service_role key` de Supabase, en cambio, es secreta y nunca debe usarse en este proyecto.
 
@@ -92,6 +92,11 @@ python3 -m http.server 5500
 ```
 
 Luego visita `http://localhost:5500` (si usaste un servidor local).
+
+# Opción 4: En la wed con vercel
+```
+
+Visita `https://cloud-task-hazel.vercel.app/`.
 
 ## Autores
 
