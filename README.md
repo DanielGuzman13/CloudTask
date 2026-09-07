@@ -2,9 +2,9 @@
 
 Aplicación web para la gestión de tareas personales o de un equipo de trabajo, desarrollada como parte del **Laboratorio desafío** del Seminario de Ingeniería de Software (Universidad ICESI).
 
-Este repositorio corresponde a la **Etapa 1: Diseño, desarrollo y control de versiones**. En etapas posteriores la aplicación evolucionará hacia una solución desplegada en la nube con Vercel, Supabase y Cloudflare.
+Este repositorio incluye la **Etapa 1** (desarrollo local con HTML/CSS/JS y control de versiones) y la **Etapa 2** (persistencia con Supabase/PostgreSQL, lista para desplegar en Vercel). La Etapa 3 (Cloudflare) se documentará por separado.
 
-## Funcionalidades (Etapa 1)
+## Funcionalidades
 
 - Crear una tarea.
 - Visualizar las tareas registradas.
@@ -36,7 +36,7 @@ Cada tarea contiene los siguientes campos:
 - **JavaScript (vanilla)** — lógica de la aplicación e interacción con la interfaz.
 - **Git / GitHub** — control de versiones y repositorio remoto.
 
-En esta etapa la persistencia de datos es local, mediante `localStorage` del navegador. El acceso a los datos está aislado en el objeto `TaskStore` (ver `js/app.js`) para facilitar, en la Etapa 2, su reemplazo por llamadas a Supabase sin modificar el resto de la aplicación.
+La persistencia de datos se realiza mediante **Supabase** (Backend as a Service) sobre una base de datos **PostgreSQL** administrada. El acceso a los datos está aislado en el objeto `TaskStore` (ver `js/app.js`), que expone `getAll`, `create`, `update` y `remove` como funciones `async` que llaman a `supabaseClient` (definido en `js/supabaseClient.js`).
 
 ## Estructura del proyecto
 
@@ -46,10 +46,36 @@ cloudtasks/
 ├── css/
 │   └── styles.css
 ├── js/
+│   ├── supabaseClient.js
 │   └── app.js
 ├── README.md
 └── .gitignore
 ```
+
+## Configuración de Supabase
+
+1. Crea un proyecto en [supabase.com](https://supabase.com) (plan gratuito).
+2. En el **SQL Editor**, crea la tabla `tasks`:
+
+   ```sql
+   create table tasks (
+     id uuid primary key default gen_random_uuid(),
+     title text not null,
+     description text,
+     completed boolean not null default false,
+     created_at timestamptz not null default now(),
+     deadline date,
+     priority text not null default 'medium' check (priority in ('low', 'medium', 'high'))
+   );
+   ```
+
+3. Habilita Row Level Security y crea políticas que permitan al rol `anon` hacer `select`, `insert`, `update` y `delete` (necesario porque esta etapa no implementa autenticación de usuarios).
+4. En **Project Settings → API**, copia el **Project URL** y la clave **anon public**.
+5. Pégalos en `js/supabaseClient.js`, en `SUPABASE_URL` y `SUPABASE_ANON_KEY`.
+
+La anon key es pública por diseño (protegida por las políticas RLS), por lo que es seguro incluirla en el repositorio. La `service_role key` de Supabase, en cambio, es secreta y nunca debe usarse en este proyecto.
+
+Si `js/supabaseClient.js` no está configurado correctamente, la aplicación muestra un aviso en pantalla indicando que no pudo conectarse a la base de datos.
 
 ## Cómo ejecutar la aplicación localmente
 

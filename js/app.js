@@ -1,81 +1,87 @@
 /**
- * CloudTasks — Etapa 1
- * Aplicación de gestión de tareas (frontend puro).
+ * CloudTasks — Etapa 2
+ * Aplicación de gestión de tareas conectada a Supabase (PostgreSQL).
  *
- * Estructura de una tarea:
+ * Estructura de una tarea (columnas de la tabla `tasks` en Supabase):
  * {
- *   id: string,          // Identificador único
+ *   id: string (uuid),   // Identificador único, generado por la base de datos
  *   title: string,       // Título de la tarea
  *   description: string, // Descripción
  *   completed: boolean,  // Estado de la tarea
- *   created_at: string,  // Fecha de creación (ISO)
+ *   created_at: string,  // Fecha de creación (generada por la base de datos)
  *   deadline: string|null, // Fecha límite (YYYY-MM-DD)
  *   priority: "low" | "medium" | "high" // Prioridad
  * }
  *
- * En esta etapa la persistencia es local (localStorage), ya que aún
- * no se ha integrado un backend administrado (eso ocurrirá en la Etapa 2
- * con Supabase). Las funciones de acceso a datos están aisladas en el
- * objeto TaskStore para que, en la siguiente etapa, sea sencillo
- * reemplazar su implementación por llamadas a Supabase sin tocar el
- * resto de la aplicación.
+ * El acceso a datos sigue aislado en el objeto TaskStore, tal como en la
+ * Etapa 1 (que usaba localStorage). Ahora sus 4 funciones hablan con
+ * Supabase mediante `supabaseClient` (definido en js/supabaseClient.js),
+ * pero el resto de la aplicación (formulario, renderizado, filtros) no
+ * tuvo que cambiar en su lógica, solo pasar a trabajar con async/await.
  */
 
 (function () {
   "use strict";
 
-  const STORAGE_KEY = "cloudtasks.tasks";
-
   /* ------------------------------------------------------------------
-   * Capa de acceso a datos (hoy: localStorage; mañana: Supabase)
+   * Capa de acceso a datos (Etapa 2: Supabase / PostgreSQL)
    * ------------------------------------------------------------------ */
   const TaskStore = {
-    getAll() {
-      try {
-        const raw = localStorage.getItem(STORAGE_KEY);
-        return raw ? JSON.parse(raw) : [];
-      } catch (err) {
-        console.error("Error leyendo tareas de localStorage:", err);
-        return [];
+    async getAll() {
+      const { data, error } = await supabaseClient
+        .from("tasks")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error("Error obteniendo tareas de Supabase:", error);
+        throw error;
       }
+      return data;
     },
 
-    saveAll(tasks) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
+    async create(task) {
+      const { data, error } = await supabaseClient
+        .from("tasks")
+        .insert(task)
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Error creando tarea en Supabase:", error);
+        throw error;
+      }
+      return data;
     },
 
-    create(task) {
-      const tasks = this.getAll();
-      tasks.unshift(task);
-      this.saveAll(tasks);
-      return task;
+    async update(id, changes) {
+      const { data, error } = await supabaseClient
+        .from("tasks")
+        .update(changes)
+        .eq("id", id)
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Error actualizando tarea en Supabase:", error);
+        throw error;
+      }
+      return data;
     },
 
-    update(id, changes) {
-      const tasks = this.getAll();
-      const index = tasks.findIndex((t) => t.id === id);
-      if (index === -1) return null;
-      tasks[index] = { ...tasks[index], ...changes };
-      this.saveAll(tasks);
-      return tasks[index];
-    },
+    async remove(id) {
+      const { error } = await supabaseClient.from("tasks").delete().eq("id", id);
 
-    remove(id) {
-      const tasks = this.getAll().filter((t) => t.id !== id);
-      this.saveAll(tasks);
+      if (error) {
+        console.error("Error eliminando tarea en Supabase:", error);
+        throw error;
+      }
     },
   };
 
   /* ------------------------------------------------------------------
    * Utilidades
    * ------------------------------------------------------------------ */
-  function generateId() {
-    if (window.crypto && crypto.randomUUID) {
-      return crypto.randomUUID();
-    }
-    return "task-" + Date.now() + "-" + Math.random().toString(16).slice(2);
-  }
-
   function escapeHtml(str) {
     const div = document.createElement("div");
     div.textContent = str;
@@ -96,6 +102,12 @@
     return deadline < today;
   }
 
+  function filterTasks(tasks, filter) {
+    if (filter === "pending") return tasks.filter((t) => !t.completed);
+    if (filter === "completed") return tasks.filter((t) => t.completed);
+    return tasks;
+  }
+
   const PRIORITY_LABELS = { low: "Baja", medium: "Media", high: "Alta" };
 
   /* ------------------------------------------------------------------
@@ -114,9 +126,11 @@
   const taskList = document.getElementById("task-list");
   const emptyState = document.getElementById("empty-state");
   const taskSummary = document.getElementById("task-summary");
+  const connectionError = document.getElementById("connection-error");
   const filterButtons = document.querySelectorAll(".filter-btn");
 
   let currentFilter = "all";
+  let cachedTasks = []; // usado para "Editar" sin volver a consultar Supabase
 
   /* ------------------------------------------------------------------
    * Validación
@@ -155,30 +169,16 @@
   /* ------------------------------------------------------------------
    * Renderizado
    * ------------------------------------------------------------------ */
-  function getFilteredTasks() {
-    const tasks = TaskStore.getAll();
-    if (currentFilter === "pending") return tasks.filter((t) => !t.completed);
-    if (currentFilter === "completed") return tasks.filter((t) => t.completed);
-    return tasks;
-  }
-
   function renderSummary(allTasks) {
     const total = allTasks.length;
     const completed = allTasks.filter((t) => t.completed).length;
-    taskSummary.textContent =
-      total === 0
-        ? ""
-        : `${completed} de ${total} tarea(s) completadas.`;
+    taskSummary.textContent = total === 0 ? "" : `${completed} de ${total} tarea(s) completadas.`;
   }
 
-  function renderTasks() {
-    const allTasks = TaskStore.getAll();
-    const tasks = getFilteredTasks();
-
-    renderSummary(allTasks);
+  function renderTaskItems(tasks, allTasksCount) {
     taskList.innerHTML = "";
 
-    if (allTasks.length === 0) {
+    if (allTasksCount === 0) {
       emptyState.hidden = false;
       emptyState.textContent = "No hay tareas registradas todavía. ¡Agrega la primera!";
       return;
@@ -228,6 +228,20 @@
     });
   }
 
+  async function renderTasks() {
+    try {
+      cachedTasks = await TaskStore.getAll();
+      connectionError.hidden = true;
+    } catch (err) {
+      connectionError.hidden = false;
+      cachedTasks = [];
+    }
+
+    renderSummary(cachedTasks);
+    const visibleTasks = filterTasks(cachedTasks, currentFilter);
+    renderTaskItems(visibleTasks, cachedTasks.length);
+  }
+
   /* ------------------------------------------------------------------
    * Manejo del formulario (crear / editar)
    * ------------------------------------------------------------------ */
@@ -235,6 +249,7 @@
     form.reset();
     idInput.value = "";
     priorityInput.value = "medium";
+    submitBtn.disabled = false;
     submitBtn.textContent = "Agregar tarea";
     cancelEditBtn.hidden = true;
     titleError.textContent = "";
@@ -254,7 +269,7 @@
     titleInput.focus();
   }
 
-  form.addEventListener("submit", function (event) {
+  form.addEventListener("submit", async function (event) {
     event.preventDefault();
     if (!validateForm()) return;
 
@@ -266,22 +281,19 @@
       priority: priorityInput.value,
     };
 
-    if (editingId) {
-      TaskStore.update(editingId, payload);
-    } else {
-      TaskStore.create({
-        id: generateId(),
-        title: payload.title,
-        description: payload.description,
-        completed: false,
-        created_at: new Date().toISOString(),
-        deadline: payload.deadline,
-        priority: payload.priority,
-      });
+    submitBtn.disabled = true;
+    try {
+      if (editingId) {
+        await TaskStore.update(editingId, payload);
+      } else {
+        await TaskStore.create({ ...payload, completed: false });
+      }
+      resetForm();
+      await renderTasks();
+    } catch (err) {
+      submitBtn.disabled = false;
+      alert("No se pudo guardar la tarea en la base de datos. Revisa la consola para más detalles.");
     }
-
-    resetForm();
-    renderTasks();
   });
 
   cancelEditBtn.addEventListener("click", resetForm);
@@ -289,14 +301,20 @@
   /* ------------------------------------------------------------------
    * Acciones sobre cada tarea (completar / editar / eliminar)
    * ------------------------------------------------------------------ */
-  taskList.addEventListener("click", function (event) {
+  taskList.addEventListener("click", async function (event) {
     const item = event.target.closest(".task-item");
     if (!item) return;
     const id = item.dataset.id;
 
     if (event.target.matches(".task-item__checkbox")) {
-      TaskStore.update(id, { completed: event.target.checked });
-      renderTasks();
+      const checked = event.target.checked;
+      try {
+        await TaskStore.update(id, { completed: checked });
+        await renderTasks();
+      } catch (err) {
+        event.target.checked = !checked; // revertir si falló
+        alert("No se pudo actualizar el estado de la tarea.");
+      }
       return;
     }
 
@@ -304,14 +322,18 @@
     if (action === "delete") {
       const confirmed = window.confirm("¿Eliminar esta tarea? Esta acción no se puede deshacer.");
       if (confirmed) {
-        TaskStore.remove(id);
-        renderTasks();
+        try {
+          await TaskStore.remove(id);
+          await renderTasks();
+        } catch (err) {
+          alert("No se pudo eliminar la tarea.");
+        }
       }
       return;
     }
 
     if (action === "edit") {
-      const task = TaskStore.getAll().find((t) => t.id === id);
+      const task = cachedTasks.find((t) => t.id === id);
       if (task) startEdit(task);
     }
   });
@@ -320,11 +342,11 @@
    * Filtros
    * ------------------------------------------------------------------ */
   filterButtons.forEach((btn) => {
-    btn.addEventListener("click", function () {
+    btn.addEventListener("click", async function () {
       filterButtons.forEach((b) => b.classList.remove("is-active"));
       btn.classList.add("is-active");
       currentFilter = btn.dataset.filter;
-      renderTasks();
+      await renderTasks();
     });
   });
 
@@ -332,7 +354,6 @@
    * Inicialización
    * ------------------------------------------------------------------ */
   document.addEventListener("DOMContentLoaded", renderTasks);
-  // Por si el script se carga después de DOMContentLoaded
   if (document.readyState !== "loading") {
     renderTasks();
   }
